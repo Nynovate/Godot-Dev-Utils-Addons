@@ -144,12 +144,12 @@ func _forward_3d_gui_input(viewport_camera: Camera3D, event: InputEvent) -> int:
 	if event is InputEventMouseMotion:
 		_update_brush_preview(viewport_camera, event.position)
 		# Only consume if painting
-		if event.button_mask & MOUSE_BUTTON_MASK_RIGHT and event.ctrl_pressed:
+		if event.button_mask & MOUSE_BUTTON_MASK_LEFT and event.shift_pressed:
 			_do_paint(viewport_camera, event.position)
 			return EditorPlugin.AFTER_GUI_INPUT_STOP
 
 	if event is InputEventMouseButton:
-		if event.button_index == MOUSE_BUTTON_RIGHT and event.pressed and event.ctrl_pressed:
+		if event.button_index == MOUSE_BUTTON_LEFT and event.pressed and event.shift_pressed:
 			_do_paint(viewport_camera, event.position)
 			return EditorPlugin.AFTER_GUI_INPUT_STOP
 
