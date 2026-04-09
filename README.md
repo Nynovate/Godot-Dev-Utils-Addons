@@ -1,5 +1,5 @@
 # Godot-Dev-Utils-Addons
-A collection of lightweight, production-oriented tools built with GDScript and GDExtension to streamline environment creation and asset workflow in Godot.
+A collection of lightweight, production-oriented tools built with GDScript to streamline environment creation and asset workflow in Godot.
 
 ---
 
@@ -50,6 +50,7 @@ A simple and efficient vertex color painting tool.
 ## Notes
 
 This addon is actively used in the development of a game, so features are added and refined based on real production needs.
+Most of the feature were implemented with the help of **IA**.
 
 ---
 
