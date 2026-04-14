@@ -31,7 +31,7 @@ void fragment() {
 	
 	// Outer edge ring
 	float edge = smoothstep(brush_radius - edge_thickness, brush_radius, dist) 
-	           - smoothstep(brush_radius, brush_radius + edge_thickness, dist);
+			   - smoothstep(brush_radius, brush_radius + edge_thickness, dist);
 	
 	// Combine circle fill and edge
 	float alpha = max(circle * brush_color.a * 0.3, edge * brush_color.a);
@@ -48,10 +48,8 @@ void fragment() {
 }
 """
 
-
 func _get_plugin_name() -> String:
 	return "Vertex Painter"
-
 
 func _handles(object: Object) -> bool:
 	return true
@@ -60,17 +58,17 @@ func _enter_tree() -> void:
 	_dock = preload("res://addons/PaintVertex/paint_vertex_UI.gd").new() as PaintVertexDock
 	_dock.name = "PaintVertex"
 	add_control_to_dock(DOCK_SLOT_RIGHT_BL, _dock)
+	
 	_dock.paint_mode_changed.connect(_on_paint_mode_changed)
 	_dock.brush_radius_changed.connect(_on_brush_radius_changed)
 	_dock.brush_strength_changed.connect(_on_brush_strength_changed)
 	_dock.live_preview_toggled.connect(_on_live_preview_toggled)
+	_dock.fill_requested.connect(_on_fill_requested)
 
-	# Listen to selection changes
 	get_editor_interface().get_selection().selection_changed.connect(_on_selection_changed)
-	_dock.set_painting_enabled(false)  # disabled by default until a mesh is selected
+	_dock.set_painting_enabled(false)
 	
 	_setup_overlay_material()
-
 
 func _exit_tree() -> void:
 	var sel := get_editor_interface().get_selection()
@@ -99,8 +97,6 @@ func _save_mesh(mesh_instance: MeshInstance3D) -> void:
 		return
 
 	var path := mesh.resource_path
-
-	# Force save as .res if it's an OBJ
 	if path.ends_with(".obj"):
 		path = path.get_basename() + ".res"
 		mesh.resource_path = path
@@ -117,7 +113,6 @@ func _on_selection_changed() -> void:
 	for node in selected:
 		if node is MeshInstance3D:
 			found_mesh = node
-			# Check if it has a StaticBody3D child
 			if _has_static_body_child(found_mesh):
 				has_valid_mesh = true
 			break
@@ -129,21 +124,15 @@ func _on_selection_changed() -> void:
 		_cleanup_overlay()
 		_dock.force_paint_off()
 	elif _dock.paint_active and found_mesh != _active_mesh:
-		# Switched to a different mesh while painting — swap material
 		_cleanup_overlay()
 		_apply_overlay_material(found_mesh)
-
-
-# ── Viewport input ────────────────────────────────────────────────────────────
 
 func _forward_3d_gui_input(viewport_camera: Camera3D, event: InputEvent) -> int:
 	if not _dock or not _dock.paint_active:
 		return EditorPlugin.AFTER_GUI_INPUT_PASS
 
-	# Hover — update brush position preview
 	if event is InputEventMouseMotion:
 		_update_brush_preview(viewport_camera, event.position)
-		# Only consume if painting
 		if event.button_mask & MOUSE_BUTTON_MASK_LEFT and event.shift_pressed:
 			_do_paint(viewport_camera, event.position)
 			return EditorPlugin.AFTER_GUI_INPUT_STOP
@@ -155,13 +144,8 @@ func _forward_3d_gui_input(viewport_camera: Camera3D, event: InputEvent) -> int:
 
 	return EditorPlugin.AFTER_GUI_INPUT_PASS
 
-
-# ── Material overlay ─────────────────────────────────────────────────────────────
-
 func _apply_overlay_material(mesh_instance: MeshInstance3D) -> void:
-	if mesh_instance.mesh == null:
-		return
-	if mesh_instance.mesh.get_surface_count() == 0:
+	if mesh_instance.mesh == null or mesh_instance.mesh.get_surface_count() == 0:
 		return
 
 	if _active_mesh == mesh_instance and _preview_mesh_instance != null:
@@ -172,7 +156,6 @@ func _apply_overlay_material(mesh_instance: MeshInstance3D) -> void:
 
 	_active_mesh = mesh_instance
 	
-	# Create or update preview mesh instance
 	if not _preview_mesh_instance or not is_instance_valid(_preview_mesh_instance):
 		_preview_mesh_instance = MeshInstance3D.new()
 		_preview_mesh_instance.mesh = mesh_instance.mesh
@@ -181,23 +164,17 @@ func _apply_overlay_material(mesh_instance: MeshInstance3D) -> void:
 		_preview_mesh_instance.top_level = true
 		mesh_instance.add_child(_preview_mesh_instance)
 	
-	# Position the preview mesh to match the target
 	_preview_mesh_instance.global_transform = mesh_instance.global_transform
 	
-	# Update shader parameters
 	_overlay_material.set_shader_parameter("brush_radius", _dock.brush_radius)
 	_overlay_material.set_shader_parameter("brush_color", _dock.paint_color)
 	_overlay_material.set_shader_parameter("show_vertex_colors", _dock.live_preview)
-
 
 func _cleanup_overlay() -> void:
 	if _preview_mesh_instance and is_instance_valid(_preview_mesh_instance):
 		_preview_mesh_instance.queue_free()
 		_preview_mesh_instance = null
 	_active_mesh = null
-
-
-# ── Brush preview update ──────────────────────────────────────────────────────
 
 func _update_brush_preview(camera: Camera3D, mouse_pos: Vector2) -> void:
 	var origin    := camera.project_ray_origin(mouse_pos)
@@ -226,9 +203,6 @@ func _update_brush_preview(camera: Camera3D, mouse_pos: Vector2) -> void:
 		_overlay_material.set_shader_parameter("brush_radius", _dock.brush_radius)
 		_overlay_material.set_shader_parameter("brush_color", _dock.paint_color)
 
-
-# ── Raycasting ────────────────────────────────────────────────────────────────
-
 func _find_mesh_instance(hit_object: Node) -> MeshInstance3D:
 	if hit_object is MeshInstance3D:
 		return hit_object
@@ -239,7 +213,6 @@ func _find_mesh_instance(hit_object: Node) -> MeshInstance3D:
 		if child is MeshInstance3D:
 			return child as MeshInstance3D
 	return null
-
 
 func _do_paint(camera: Camera3D, mouse_pos: Vector2) -> void:
 	var origin    := camera.project_ray_origin(mouse_pos)
@@ -258,10 +231,7 @@ func _do_paint(camera: Camera3D, mouse_pos: Vector2) -> void:
 	var hit_object   := result["collider"] as Node
 	var mesh_instance := _find_mesh_instance(hit_object)
 
-	if mesh_instance == null:
-		return
-
-	if not mesh_instance.mesh is ArrayMesh:
+	if mesh_instance == null or not mesh_instance.mesh is ArrayMesh:
 		return
 
 	var array_mesh := mesh_instance.mesh as ArrayMesh
@@ -277,8 +247,7 @@ func _do_paint(camera: Camera3D, mouse_pos: Vector2) -> void:
 		colors = existing as PackedColorArray
 	if colors.size() != vertices.size():
 		colors.resize(vertices.size())
-		for i in range(colors.size()):
-			colors[i] = Color.WHITE
+		colors.fill(Color.WHITE)
 
 	var strength     := _dock.brush_strength
 	var target_color := _dock.paint_color
@@ -297,25 +266,54 @@ func _do_paint(camera: Camera3D, mouse_pos: Vector2) -> void:
 	if painted == 0:
 		return
 
-	# Write back to mesh
 	surface_arrays[Mesh.ARRAY_COLOR] = colors
 	var flags := array_mesh.surface_get_format(0)
 	flags |= Mesh.ARRAY_FORMAT_COLOR
 	array_mesh.clear_surfaces()
 	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface_arrays, [], {}, flags)
 
-	# Re-apply overlay material since clear_surfaces() might affect it
 	if _preview_mesh_instance != null and _active_mesh != null:
 		_preview_mesh_instance.mesh = array_mesh
 	
 	_save_mesh(mesh_instance)
 
+func _on_fill_requested() -> void:
+	var selected := get_editor_interface().get_selection().get_selected_nodes()
+	var mesh_instance: MeshInstance3D = null
+	
+	for node in selected:
+		if node is MeshInstance3D:
+			mesh_instance = node
+			break
+			
+	if not mesh_instance or not mesh_instance.mesh is ArrayMesh:
+		return
 
-# ── Dock signal handlers ──────────────────────────────────────────────────────
+	var array_mesh := mesh_instance.mesh as ArrayMesh
+	if array_mesh.get_surface_count() == 0:
+		return
+
+	var surface_arrays := array_mesh.surface_get_arrays(0)
+	var vertices := surface_arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+	
+	var colors := PackedColorArray()
+	colors.resize(vertices.size())
+	colors.fill(_dock.paint_color)
+
+	surface_arrays[Mesh.ARRAY_COLOR] = colors
+	var flags := array_mesh.surface_get_format(0)
+	flags |= Mesh.ARRAY_FORMAT_COLOR
+	
+	array_mesh.clear_surfaces()
+	array_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, surface_arrays, [], {}, flags)
+
+	if _preview_mesh_instance != null and _active_mesh == mesh_instance:
+		_preview_mesh_instance.mesh = array_mesh
+	
+	_save_mesh(mesh_instance)
 
 func _on_paint_mode_changed(enabled: bool) -> void:
 	if enabled:
-		# Grab the currently selected MeshInstance3D and apply overlay immediately
 		var selected := get_editor_interface().get_selection().get_selected_nodes()
 		for node in selected:
 			if node is MeshInstance3D and _has_static_body_child(node):
@@ -324,22 +322,16 @@ func _on_paint_mode_changed(enabled: bool) -> void:
 	else:
 		_cleanup_overlay()
 
-
 func _on_brush_radius_changed(value: float) -> void:
 	if _overlay_material:
 		_overlay_material.set_shader_parameter("brush_radius", value)
 
-
 func _on_brush_strength_changed(value: float) -> void:
 	pass
-
 
 func _on_live_preview_toggled(enabled: bool) -> void:
 	if _overlay_material:
 		_overlay_material.set_shader_parameter("show_vertex_colors", enabled)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 func _has_static_body_child(mesh: MeshInstance3D) -> bool:
 	for child in mesh.get_children():

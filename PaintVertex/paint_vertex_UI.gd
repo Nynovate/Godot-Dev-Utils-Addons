@@ -7,6 +7,7 @@ signal paint_color_changed(color: Color)
 signal brush_radius_changed(value: float)
 signal brush_strength_changed(value: float)
 signal live_preview_toggled(enabled: bool)
+signal fill_requested()
 
 var paint_active := false
 var paint_color := Color(0.878, 0.235, 0.235)
@@ -18,6 +19,7 @@ var _mode_button: Button
 var _live_preview_button: Button
 var _warning_label: Label
 var _paint_picker: ColorPickerButton
+var _fill_button: Button
 var _radius_slider: HSlider
 var _radius_spinbox: SpinBox
 var _strength_slider: HSlider
@@ -25,7 +27,6 @@ var _strength_spinbox: SpinBox
 
 const DISABLE_PAINT_MODE_TEXT: String = "Disable Paint Mode"
 const ENABLE_PAINT_MODE_TEXT: String = "Enable Paint Mode"
-
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(220, 0)
@@ -48,16 +49,13 @@ func _ready() -> void:
 	_build_separator(root_vbox)
 	_build_hints(root_vbox)
 
-
-# ── Sections ─────────────────────────────────────────────────────────────────
-
 func set_painting_enabled(enabled: bool) -> void:
 	_mode_button.disabled = not enabled
+	_fill_button.disabled = not enabled
 	if not enabled:
 		_mode_button.tooltip_text = "Select a MeshInstance3D to paint"
 	else:
 		_mode_button.tooltip_text = ""
-
 
 func force_paint_off() -> void:
 	if paint_active:
@@ -65,7 +63,6 @@ func force_paint_off() -> void:
 		_mode_button.button_pressed = false
 		_mode_button.text = ENABLE_PAINT_MODE_TEXT
 		paint_mode_changed.emit(false)
-
 
 func update_warning_state(mesh_instance: MeshInstance3D, is_valid: bool) -> void:
 	var warning_text = ""
@@ -79,7 +76,6 @@ func update_warning_state(mesh_instance: MeshInstance3D, is_valid: bool) -> void
 		_warning_label.visible = false
 	
 	_warning_label.text = warning_text
-
 
 func _build_mode_section(parent: VBoxContainer) -> void:
 	var section := _make_section(parent)
@@ -100,10 +96,9 @@ func _build_mode_section(parent: VBoxContainer) -> void:
 	_live_preview_button.toggled.connect(_on_live_preview_toggled)
 	section.add_child(_live_preview_button)
 
-
 func _build_warning_section(parent: VBoxContainer) -> void:
 	_warning_label = Label.new()
-	_warning_label.add_theme_color_override("font_color", Color(1.0, 0.8, 0.0)) # yellow
+	_warning_label.add_theme_color_override("font_color", Color(1.0, 0.8, 0.0))
 	_warning_label.text = ""
 	_warning_label.autowrap_mode = TextServer.AUTOWRAP_WORD
 	_warning_label.visible = false
@@ -116,7 +111,6 @@ func _build_warning_section(parent: VBoxContainer) -> void:
 	parent.add_child(margin)
 	margin.add_child(_warning_label)
 
-
 func _build_color_section(parent: VBoxContainer) -> void:
 	var section := _make_section(parent, "Paint Color")
 
@@ -126,12 +120,16 @@ func _build_color_section(parent: VBoxContainer) -> void:
 	_paint_picker.custom_minimum_size = Vector2(0, 36)
 	_paint_picker.color_changed.connect(_on_paint_color_changed)
 	section.add_child(_paint_picker)
-
+	
+	_fill_button = Button.new()
+	_fill_button.text = "Fill Mesh"
+	_fill_button.tooltip_text = "Fill the entire mesh with the current color"
+	_fill_button.pressed.connect(func(): fill_requested.emit())
+	section.add_child(_fill_button)
 
 func _build_brush_section(parent: VBoxContainer) -> void:
 	var section := _make_section(parent, "Brush Settings")
 
-	# Radius row with slider and spinbox
 	var radius_hbox := HBoxContainer.new()
 	radius_hbox.add_theme_constant_override("separation", 6)
 	section.add_child(radius_hbox)
@@ -160,7 +158,6 @@ func _build_brush_section(parent: VBoxContainer) -> void:
 	_radius_spinbox.value_changed.connect(_on_radius_spinbox_changed)
 	radius_hbox.add_child(_radius_spinbox)
 
-	# Strength row with slider and spinbox
 	var strength_hbox := HBoxContainer.new()
 	strength_hbox.add_theme_constant_override("separation", 6)
 	section.add_child(strength_hbox)
@@ -189,7 +186,6 @@ func _build_brush_section(parent: VBoxContainer) -> void:
 	_strength_spinbox.value_changed.connect(_on_strength_spinbox_changed)
 	strength_hbox.add_child(_strength_spinbox)
 
-
 func _build_hints(parent: VBoxContainer) -> void:
 	var margin := MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 6)
@@ -205,9 +201,6 @@ func _build_hints(parent: VBoxContainer) -> void:
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hint.autowrap_mode = TextServer.AUTOWRAP_OFF
 	margin.add_child(hint)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
 func _make_section(parent: VBoxContainer, title: String = "") -> VBoxContainer:
 	var margin := MarginContainer.new()
@@ -229,49 +222,39 @@ func _make_section(parent: VBoxContainer, title: String = "") -> VBoxContainer:
 
 	return vbox
 
-
 func _build_separator(parent: VBoxContainer) -> void:
 	parent.add_child(HSeparator.new())
-
-
-# ── Signal handlers ───────────────────────────────────────────────────────────
 
 func _on_mode_toggled(pressed: bool) -> void:
 	paint_active = pressed
 	_mode_button.text = DISABLE_PAINT_MODE_TEXT if pressed else ENABLE_PAINT_MODE_TEXT
 	paint_mode_changed.emit(pressed)
 
-
 func _on_live_preview_toggled(pressed: bool) -> void:
 	live_preview = pressed
 	_live_preview_button.text = "Live Preview: ON" if pressed else "Live Preview: OFF"
 	live_preview_toggled.emit(pressed)
 
-
 func _on_paint_color_changed(color: Color) -> void:
 	paint_color = color
 	paint_color_changed.emit(color)
 
-
 func _on_radius_changed(value: float) -> void:
 	brush_radius = value
-	_radius_spinbox.value = value  # Sync spinbox with slider
+	_radius_spinbox.value = value
 	brush_radius_changed.emit(value)
-
 
 func _on_radius_spinbox_changed(value: float) -> void:
 	brush_radius = value
-	_radius_slider.value = value  # Sync slider with spinbox
+	_radius_slider.value = value
 	brush_radius_changed.emit(value)
-
 
 func _on_strength_changed(value: float) -> void:
 	brush_strength = value
-	_strength_spinbox.value = value  # Sync spinbox with slider
+	_strength_spinbox.value = value
 	brush_strength_changed.emit(value)
-
 
 func _on_strength_spinbox_changed(value: float) -> void:
 	brush_strength = value
-	_strength_slider.value = value  # Sync slider with spinbox
+	_strength_slider.value = value
 	brush_strength_changed.emit(value)
