@@ -4,6 +4,7 @@ extends EditorPlugin
 var _dock: PaintMeshGPUDock = null
 var _brush_preview_material: ShaderMaterial = null
 var _preview_mesh_instance: MeshInstance3D = null
+var _undo_redo: EditorUndoRedoManager = null
 
 # Chunk system
 const CHUNK_SIZE: float = 32.0
@@ -67,6 +68,9 @@ func _enter_tree() -> void:
 	add_control_to_dock(DOCK_SLOT_RIGHT_BL, _dock)
 	EditorInterface.get_selection().selection_changed.connect(_on_selection_changed)
 	
+	# Get undo/redo manager
+	_undo_redo = get_undo_redo()
+	
 	_setup_brush_preview()
 
 func _exit_tree() -> void:
@@ -93,6 +97,8 @@ func _cleanup_brush_preview() -> void:
 func _on_selection_changed() -> void:
 	_hide_brush_preview()
 	if _dock:
+		# Force paint mode off when selection changes
+		_dock.force_paint_off()
 		_dock._update_button_state()
 
 func _handles(object: Object) -> bool:
@@ -128,7 +134,7 @@ func _forward_3d_gui_input(camera: Camera3D, event: InputEvent) -> int:
 		if result:
 			_erase_instances(result.position)
 			return AFTER_GUI_INPUT_STOP
-
+	
 	return AFTER_GUI_INPUT_PASS
 
 func _paint_instances(center_pos: Vector3, surface_normal: Vector3) -> void:
@@ -137,6 +143,9 @@ func _paint_instances(center_pos: Vector3, surface_normal: Vector3) -> void:
 	
 	# Calculate number of instances to spawn based on brush density
 	var num_instances = int(_dock.brush_density * 10.0)
+	
+	# Store all instances to be added for undo/redo
+	var instances_to_add: Array = []
 	
 	for i in num_instances:
 		# Random position within brush radius
@@ -160,35 +169,104 @@ func _paint_instances(center_pos: Vector3, surface_normal: Vector3) -> void:
 		# Create transform with randomization
 		var instance_transform = _create_randomized_transform(spawn_pos, hit.normal)
 		
-		# Get chunk coordinate and add instance
+		# Get chunk coordinate
 		var chunk_coord = _world_to_chunk(spawn_pos)
-		_add_instance_to_chunk(chunk_coord, selected_mesh, instance_transform)
+		
+		instances_to_add.append({
+			"chunk_coord": chunk_coord,
+			"mesh": selected_mesh,
+			"transform": instance_transform
+		})
+	
+	# Apply instances with undo/redo support
+	if instances_to_add.size() > 0:
+		_add_instances_with_undo(instances_to_add)
+
+func _add_instances_with_undo(instances_data: Array) -> void:
+	_undo_redo.create_action("Paint Mesh Instances")
+	
+	# Do action: Add instances
+	_undo_redo.add_do_method(self, "_apply_add_instances", instances_data)
+	
+	# Undo action: Remove these instances
+	_undo_redo.add_undo_method(self, "_apply_remove_instances", instances_data)
+	
+	_undo_redo.commit_action()
+
+func _apply_add_instances(instances_data: Array) -> void:
+	for data in instances_data:
+		_add_instance_to_chunk(data.chunk_coord, data.mesh, data.transform)
+
+func _apply_remove_instances(instances_data: Array) -> void:
+	# Group by chunk for efficient removal
+	var instances_by_chunk: Dictionary = {}
+	
+	for data in instances_data:
+		var chunk_coord = data.chunk_coord
+		if not instances_by_chunk.has(chunk_coord):
+			instances_by_chunk[chunk_coord] = []
+		instances_by_chunk[chunk_coord].append({
+			"mesh": data.mesh,
+			"transform": data.transform
+		})
+	
+	# Remove instances from each chunk
+	for chunk_coord in instances_by_chunk.keys():
+		if not _chunks.has(chunk_coord):
+			continue
+		
+		var chunk = _chunks[chunk_coord] as ChunkData
+		var instances_to_remove = instances_by_chunk[chunk_coord]
+		
+		# Find and remove matching instances
+		for remove_data in instances_to_remove:
+			for i in range(chunk.instance_data.size() - 1, -1, -1):
+				var instance = chunk.instance_data[i]
+				# Match by mesh and transform (approximate match for transform)
+				if instance.mesh == remove_data.mesh and \
+				   instance.transform.origin.distance_to(remove_data.transform.origin) < 0.001:
+					chunk.instance_data.remove_at(i)
+					break
+		
+		# Rebuild the chunk's multimeshes
+		_rebuild_chunk_multimeshes(chunk)
 
 func _erase_instances(center_pos: Vector3) -> void:
 	# Find all chunks that could be affected by the brush
 	var affected_chunks = _get_chunks_in_radius(center_pos, _dock.brush_radius)
+	
+	var instances_to_remove: Array = []
 	
 	for chunk_coord in affected_chunks:
 		if not _chunks.has(chunk_coord):
 			continue
 		
 		var chunk = _chunks[chunk_coord] as ChunkData
-		var instances_to_remove: Array[int] = []
 		
 		# Find instances within brush radius
-		for i in range(chunk.instance_data.size()):
-			var instance = chunk.instance_data[i]
+		for instance in chunk.instance_data:
 			var dist = center_pos.distance_to(instance.transform.origin)
 			if dist <= _dock.brush_radius:
-				instances_to_remove.append(i)
-		
-		# Remove instances in reverse order to maintain indices
-		instances_to_remove.reverse()
-		for idx in instances_to_remove:
-			chunk.instance_data.remove_at(idx)
-		
-		# Rebuild the chunk's multimeshes
-		_rebuild_chunk_multimeshes(chunk)
+				instances_to_remove.append({
+					"chunk_coord": chunk_coord,
+					"mesh": instance.mesh,
+					"transform": instance.transform
+				})
+	
+	# Apply erase with undo/redo support
+	if instances_to_remove.size() > 0:
+		_erase_instances_with_undo(instances_to_remove)
+
+func _erase_instances_with_undo(instances_data: Array) -> void:
+	_undo_redo.create_action("Erase Mesh Instances")
+	
+	# Do action: Remove instances
+	_undo_redo.add_do_method(self, "_apply_remove_instances", instances_data)
+	
+	# Undo action: Add these instances back
+	_undo_redo.add_undo_method(self, "_apply_add_instances", instances_data)
+	
+	_undo_redo.commit_action()
 
 func _pick_random_mesh() -> Mesh:
 	if _dock.mesh_resources.is_empty():
@@ -316,7 +394,7 @@ func _get_or_create_chunk(chunk_coord: Vector2i) -> ChunkData:
 		return null
 	
 	var chunk_node = Node3D.new()
-	chunk_node.name = "Chunk_%d_%d" % [chunk_coord.x, chunk_coord.y]
+	chunk_node.name = _get_unique_chunk_name(container, chunk_coord)
 	container.add_child(chunk_node)
 	chunk_node.owner = EditorInterface.get_edited_scene_root()
 	
@@ -325,13 +403,30 @@ func _get_or_create_chunk(chunk_coord: Vector2i) -> ChunkData:
 	
 	return chunk
 
+# Generate unique chunk name
+func _get_unique_chunk_name(parent: Node, chunk_coord: Vector2i) -> String:
+	var base_name = "Chunk_%d_%d" % [chunk_coord.x, chunk_coord.y]
+	var name = base_name
+	var counter = 1
+	
+	# Check if name exists and generate unique one
+	while parent.has_node(name):
+		name = "%s_%d" % [base_name, counter]
+		counter += 1
+	
+	return name
+
 func _get_or_create_multimesh(chunk: ChunkData, mesh: Mesh) -> MultiMeshInstance3D:
 	if chunk.multimesh_instances.has(mesh):
 		return chunk.multimesh_instances[mesh]
 	
 	# Create new MultiMeshInstance3D
 	var mmi = MultiMeshInstance3D.new()
-	mmi.name = mesh.resource_name if mesh.resource_name else "Mesh"
+	
+	# Generate unique mesh name
+	var base_name = mesh.resource_name if mesh.resource_name else "Mesh"
+	var unique_name = _get_unique_mesh_name(chunk.chunk_node, base_name)
+	mmi.name = unique_name
 	
 	var multimesh = MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_3D
@@ -345,6 +440,18 @@ func _get_or_create_multimesh(chunk: ChunkData, mesh: Mesh) -> MultiMeshInstance
 	chunk.multimesh_instances[mesh] = mmi
 	
 	return mmi
+
+# Generate unique mesh instance name within chunk
+func _get_unique_mesh_name(parent: Node, base_name: String) -> String:
+	var name = base_name
+	var counter = 1
+	
+	# Check if name exists and generate unique one
+	while parent.has_node(name):
+		name = "%s_%d" % [base_name, counter]
+		counter += 1
+	
+	return name
 
 func _rebuild_chunk_multimeshes(chunk: ChunkData) -> void:
 	# Group instances by mesh type
@@ -411,17 +518,39 @@ func _get_or_create_gpu_instance_container() -> Node3D:
 	if not root:
 		return null
 	
-	# Try to find existing container
-	var container = root.find_child("GPUInstance", false, false)
+	# Try to find existing container using get_node_or_null for safer lookup
+	var container = root.get_node_or_null("GPUInstance")
+	
+	# If multiple nodes exist, iterate children to find the right one
+	if not container:
+		for child in root.get_children():
+			if child.name == "GPUInstance" and child is Node3D:
+				container = child
+				break
 	
 	if not container:
 		container = Node3D.new()
-		container.name = "GPUInstance"
+		# Generate unique name to prevent collisions
+		var unique_name = _get_unique_container_name(root)
+		container.name = unique_name
 		root.add_child(container)
 		# CRITICAL: Set owner so it appears in the tree and saves
 		container.owner = root
 	
 	return container
+
+# Generate unique container name
+func _get_unique_container_name(parent: Node) -> String:
+	var base_name = "GPUInstance"
+	var name = base_name
+	var counter = 1
+	
+	# Check if name exists and generate unique one
+	while parent.has_node(name):
+		name = "%s_%d" % [base_name, counter]
+		counter += 1
+	
+	return name
 
 func _perform_raycast(camera: Camera3D, mouse_pos: Vector2):
 	var space_state = camera.get_world_3d().direct_space_state

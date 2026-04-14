@@ -109,6 +109,10 @@ func force_paint_off() -> void:
 		_mode_button.button_pressed = false
 		_mode_button.text = ENABLE_PAINT_MODE_TEXT
 		paint_mode_changed.emit(false)
+	if erase_mode:
+		erase_mode = false
+		_erase_button.button_pressed = false
+		erase_mode_changed.emit(false)
 
 func _build_mode_section(parent: VBoxContainer) -> void:
 	var section := _make_section(parent)
